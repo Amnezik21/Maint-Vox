@@ -647,25 +647,54 @@
         function searchInPages(query, startPage = 1, endPage = null) {
             endPage = endPage || pdfPages.length;
             const results = [];
-            const lowerQuery = query.toLowerCase();
+            const searchTerms = query.toLowerCase().split(' ').filter(w => w.length > 2);
             
             for (let i = startPage - 1; i < endPage && i < pdfPages.length; i++) {
-                const pageText = pdfPages[i].text.toLowerCase();
-                if (pageText.includes(lowerQuery)) {
-                    // Extraire le contexte autour du mot-clé
-                    const index = pageText.indexOf(lowerQuery);
-                    const start = Math.max(0, index - 100);
-                    const end = Math.min(pageText.length, index + 200);
-                    const context = pdfPages[i].text.substring(start, end);
-                    
-                    results.push({
-                        page: i + 1,
-                        context: context
-                    });
+                const pageText = pdfPages[i].text;
+                const pageTextLower = pageText.toLowerCase();
+                
+                // Chercher chaque terme
+                for (const term of searchTerms) {
+                    const index = pageTextLower.indexOf(term);
+                    if (index !== -1) {
+                        // Extraire le contexte autour du mot-clé (plus large)
+                        const start = Math.max(0, index - 150);
+                        const end = Math.min(pageText.length, index + 300);
+                        let context = pageText.substring(start, end).trim();
+                        
+                        // Nettoyer le contexte
+                        context = context.replace(/\s+/g, ' ');
+                        
+                        // Éviter les doublons de la même page
+                        if (!results.some(r => r.page === i + 1)) {
+                            results.push({
+                                page: i + 1,
+                                context: context,
+                                fullPageText: pageText
+                            });
+                        }
+                        break; // Passer à la page suivante après avoir trouvé un résultat
+                    }
                 }
             }
             
             return results;
+        }
+        
+        // Nouvelle fonction : extraction intelligente d'information
+        function extractRelevantInfo(query, fullText) {
+            const lowerQuery = query.toLowerCase();
+            const lowerText = fullText.toLowerCase();
+            
+            // Trouver la position de la requête
+            const queryIndex = lowerText.indexOf(lowerQuery);
+            if (queryIndex === -1) return null;
+            
+            // Extraire un large contexte
+            const start = Math.max(0, queryIndex - 200);
+            const end = Math.min(fullText.length, queryIndex + 500);
+            
+            return fullText.substring(start, end).replace(/\s+/g, ' ').trim();
         }
 
         // Démarrage du mode mains libres
@@ -808,41 +837,58 @@
 
             // Procédure
             if (lowerQuery.includes('procédure') || lowerQuery.includes('comment') || lowerQuery.includes('étape')) {
-                const results = searchInPages('procédure');
+                console.log('🔍 Recherche procédure...');
+                
+                // Chercher plusieurs variantes
+                let results = searchInPages('procédure');
+                if (results.length === 0) results = searchInPages('étape');
+                if (results.length === 0) results = searchInPages('instruction');
+                if (results.length === 0) results = searchInPages('mode opératoire');
+                
                 if (results.length > 0) {
-                    return `Procédure trouvée page ${results[0].page} : ${results[0].context}... Voulez-vous plus de détails ?`;
+                    console.log('✅ Trouvé:', results.length, 'résultats');
+                    const info = results[0];
+                    return `Procédure trouvée page ${info.page}. Voici l'extrait : ${info.context}. Dites "page ${info.page}" pour plus de détails ou "suite" pour continuer.`;
                 }
                 
-                // Chercher "étape" si procédure pas trouvée
-                const stepResults = searchInPages('étape');
-                if (stepResults.length > 0) {
-                    return `Étapes trouvées page ${stepResults[0].page} : ${stepResults[0].context}... Voulez-vous la suite ?`;
+                console.log('⚠️ Procédure non trouvée, recherche large...');
+                // Si rien trouvé, lire les premières pages (souvent le contenu principal)
+                if (pdfPages.length > 1) {
+                    const page2Content = pdfPages[1].text.substring(0, 400);
+                    return `Voici le contenu de la page 2 qui contient généralement les procédures : ${page2Content}. Voulez-vous que je continue ?`;
                 }
-                
-                return 'Je n\'ai pas trouvé de procédure explicite. Dites "chercher" suivi d\'un mot-clé plus précis.';
+                return 'Procédure non trouvée. Dites "chercher" suivi d\'un mot-clé plus précis, ou "page 2" pour lire une page spécifique.';
             }
 
-            // Sécurité
+            // Sécurité  
             if (lowerQuery.includes('sécurité') || lowerQuery.includes('danger') || lowerQuery.includes('risque') || lowerQuery.includes('protection')) {
-                const results = searchInPages('sécurité');
+                console.log('🔍 Recherche sécurité...');
+                
+                let results = searchInPages('sécurité');
+                if (results.length === 0) results = searchInPages('protection');
+                if (results.length === 0) results = searchInPages('danger');
+                if (results.length === 0) results = searchInPages('epi');
+                
                 if (results.length > 0) {
-                    return `Consignes de sécurité page ${results[0].page} : ${results[0].context}`;
+                    console.log('✅ Trouvé sécurité');
+                    return `Sécurité, page ${results[0].page} : ${results[0].context}`;
                 }
-                return 'Consignes générales : Portez vos EPI. Coupez l\'alimentation. Consultez les sections sécurité du document.';
+                return 'Consignes générales : Portez vos EPI. Coupez l\'alimentation. Aucune mention spécifique trouvée dans ce document.';
             }
 
             // Outils
             if (lowerQuery.includes('outil') || lowerQuery.includes('matériel') || lowerQuery.includes('équipement')) {
-                const results = searchInPages('outil');
-                if (results.length === 0) {
-                    const matResults = searchInPages('matériel');
-                    if (matResults.length > 0) {
-                        return `Matériel page ${matResults[0].page} : ${matResults[0].context}`;
-                    }
-                } else {
-                    return `Outils page ${results[0].page} : ${results[0].context}`;
+                console.log('🔍 Recherche outils...');
+                
+                let results = searchInPages('outil');
+                if (results.length === 0) results = searchInPages('matériel');
+                if (results.length === 0) results = searchInPages('équipement');
+                
+                if (results.length > 0) {
+                    console.log('✅ Trouvé outils');
+                    return `Outils/matériel page ${results[0].page} : ${results[0].context}`;
                 }
-                return 'Liste d\'outils non trouvée. Dites "chercher équipement" pour une recherche plus large.';
+                return 'Liste d\'outils non trouvée dans ce document. Il s\'agit peut-être d\'un document administratif.';
             }
 
             // Lecture complète ou continuation
@@ -865,16 +911,34 @@
                 return 'Commandes disponibles : "sommaire" pour voir la structure. "page" suivi d\'un numéro. "chercher" suivi d\'un mot-clé. "procédure", "sécurité", "outils". "combien de pages". Document de ' + pdfPages.length + ' pages chargé.';
             }
 
-            // Réponse par défaut - recherche contextuelle
-            const words = lowerQuery.split(' ').filter(w => w.length > 3);
+            // Réponse par défaut - recherche contextuelle améliorée
+            console.log('🔍 Recherche générique pour:', query);
+            
+            // Extraire les mots significatifs (plus de 3 lettres)
+            const words = lowerQuery
+                .replace(/[^\wàâäéèêëïîôùûüÿæœç]/g, ' ')
+                .split(' ')
+                .filter(w => w.length > 3);
+            
+            console.log('Mots-clés extraits:', words);
+            
             if (words.length > 0) {
-                const results = searchInPages(words[0]);
-                if (results.length > 0) {
-                    return `Page ${results[0].page} : ${results[0].context}... Trouvé sur ${results.length} page(s). Voulez-vous voir d'autres résultats ?`;
+                // Essayer chaque mot
+                for (const word of words) {
+                    const results = searchInPages(word);
+                    if (results.length > 0) {
+                        console.log('✅ Trouvé avec le mot:', word);
+                        const otherPages = results.slice(1, 3).map(r => `page ${r.page}`).join(', ');
+                        const moreInfo = results.length > 1 ? ` Aussi trouvé ${otherPages}.` : '';
+                        return `J'ai trouvé "${word}" page ${results[0].page}. Voici l'extrait : ${results[0].context}.${moreInfo} Voulez-vous plus d'informations ?`;
+                    }
                 }
+                
+                console.log('⚠️ Aucun résultat trouvé pour les mots-clés');
             }
 
-            return `Je n'ai pas compris "${query}". Dites "aide" pour voir les commandes disponibles. Le document contient ${pdfPages.length} pages.`;
+            // Si vraiment rien trouvé, proposer le sommaire ou page 1
+            return `Je n'ai pas trouvé "${query}" dans le document de ${pdfPages.length} pages. Essayez "sommaire" pour voir la structure, ou "page 1" pour lire depuis le début. Vous pouvez aussi dire "aide" pour voir toutes les commandes.`;
         }
 
         // Synthèse vocale
