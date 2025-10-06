@@ -333,10 +333,25 @@
             </ul>
             
             <div class="examples">
-                <p style="color: #1e40af; font-weight: bold; margin-bottom: 8px;">💬 Exemples de questions :</p>
-                <p style="color: #1e3a8a; font-size: 0.9em;">
-                    "Quelle est la procédure ?" • "Quels outils sont nécessaires ?" • 
-                    "Quelles sont les consignes de sécurité ?" • "Lis le document complet"
+                <p style="color: #1e40af; font-weight: bold; margin-bottom: 8px;">💬 Commandes vocales disponibles :</p>
+                <p style="color: #1e3a8a; font-size: 0.9em; line-height: 1.8;">
+                    <strong>Navigation :</strong><br>
+                    • "Sommaire" ou "Table des matières"<br>
+                    • "Page 25" (aller à une page spécifique)<br>
+                    • "Combien de pages ?"<br>
+                    • "Aller à la section 3"<br><br>
+                    
+                    <strong>Recherche :</strong><br>
+                    • "Chercher maintenance préventive"<br>
+                    • "Trouve le mot pression"<br>
+                    • "Quelle est la procédure ?"<br>
+                    • "Quels sont les outils ?"<br>
+                    • "Consignes de sécurité ?"<br><br>
+                    
+                    <strong>Lecture :</strong><br>
+                    • "Lire le document"<br>
+                    • "Continue" ou "Suite"<br>
+                    • "Aide" (liste des commandes)
                 </p>
             </div>
             
@@ -355,6 +370,9 @@
         let speechSynthesis = window.speechSynthesis;
         let conversationHistory = [];
         let microphoneAuthorized = false;
+        let pdfPages = []; // Stockage page par page
+        let pdfSummary = []; // Sommaire extrait
+        let currentSection = null; // Section actuelle
 
         // TEST DU MICROPHONE AU CHARGEMENT
         window.addEventListener('load', function() {
@@ -496,52 +514,158 @@
             }
 
             console.log('📄 Chargement du PDF:', file.name);
-            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileName').textContent = file.name + ' - Extraction en cours...';
             speakText('Chargement du document en cours');
 
             try {
                 const arrayBuffer = await file.arrayBuffer();
                 pdfText = await extractTextFromPDF(arrayBuffer);
                 
-                console.log('✅ PDF chargé, texte extrait:', pdfText.substring(0, 100) + '...');
-                const successMsg = `Document ${file.name} chargé avec succès. Je suis prêt à répondre à vos questions.`;
+                console.log('✅ PDF chargé, texte extrait (' + pdfText.length + ' caractères)');
+                console.log('Aperçu:', pdfText.substring(0, 200));
+                
+                document.getElementById('fileName').textContent = file.name + ' ✅';
+                
+                const successMsg = `Document ${file.name} chargé avec succès. ${Math.floor(pdfText.length / 100)} lignes extraites. Je suis prêt à répondre à vos questions.`;
                 showResponse(successMsg);
                 speakText(successMsg);
                 
                 document.getElementById('startButton').classList.add('visible');
             } catch (error) {
                 console.error('❌ Erreur PDF:', error);
-                const errorMsg = 'Erreur lors du chargement du PDF';
+                const errorMsg = 'Erreur lors du chargement du PDF: ' + error.message;
                 showResponse(errorMsg);
                 speakText(errorMsg);
             }
         });
 
-        // Extraction du texte du PDF
+        // Extraction du texte du PDF avec PDF.js
         async function extractTextFromPDF(arrayBuffer) {
-            const uint8Array = new Uint8Array(arrayBuffer);
-            const decoder = new TextDecoder('utf-8', { fatal: false });
-            let rawText = decoder.decode(uint8Array);
-
-            const textMatches = rawText.match(/\(([^)]+)\)/g);
-            let extractedText = '';
-
-            if (textMatches && textMatches.length > 0) {
-                extractedText = textMatches
-                    .map(match => match.slice(1, -1))
-                    .join(' ')
-                    .replace(/\\n/g, ' ')
+            console.log('📖 Extraction du texte avec PDF.js...');
+            
+            try {
+                const loadingTask = pdfjsLib.getDocument({data: arrayBuffer});
+                const pdf = await loadingTask.promise;
+                
+                console.log('📄 PDF chargé:', pdf.numPages, 'pages');
+                
+                let fullText = '';
+                pdfPages = []; // Réinitialiser
+                
+                // Extraire le texte de chaque page
+                for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                    const page = await pdf.getPage(pageNum);
+                    const textContent = await page.getTextContent();
+                    
+                    const pageText = textContent.items
+                        .map(item => item.str)
+                        .join(' ');
+                    
+                    // Stocker chaque page séparément
+                    pdfPages.push({
+                        number: pageNum,
+                        text: pageText.trim()
+                    });
+                    
+                    fullText += pageText + '\n\n';
+                    
+                    if (pageNum % 10 === 0) {
+                        console.log(`✅ ${pageNum}/${pdf.numPages} pages extraites...`);
+                    }
+                }
+                
+                // Nettoyer le texte
+                fullText = fullText
                     .replace(/\s+/g, ' ')
                     .trim();
+                
+                // Extraire le sommaire automatiquement
+                pdfSummary = extractSummary(fullText);
+                console.log('📑 Sommaire extrait:', pdfSummary.length, 'sections trouvées');
+                
+                if (!fullText || fullText.length < 20) {
+                    throw new Error('Le PDF semble vide ou le texte n\'a pas pu être extrait');
+                }
+                
+                console.log('✅ Extraction terminée:', fullText.length, 'caractères,', pdf.numPages, 'pages');
+                return fullText;
+                
+            } catch (error) {
+                console.error('❌ Erreur extraction PDF.js:', error);
+                throw new Error('Impossible d\'extraire le texte du PDF. Le document est peut-être protégé ou contient uniquement des images.');
             }
+        }
 
-            if (!extractedText || extractedText.length < 20) {
-                extractedText = 'Document PDF chargé. Contenu disponible pour analyse. ' +
-                               'Ce document contient des informations de maintenance. ' +
-                               'Posez vos questions sur les procédures, la sécurité ou les outils nécessaires.';
+        // Extraire le sommaire du document
+        function extractSummary(text) {
+            const summary = [];
+            
+            // Rechercher les patterns de titre/section
+            const patterns = [
+                /(?:^|\n)(CHAPITRE|SECTION|PARTIE)\s+(\d+|[IVX]+)[:\s\-]+([^\n]{10,100})/gi,
+                /(?:^|\n)(\d+[\.\)]\s+[A-ZÀÉÈÊ][^\n]{10,100})/g,
+                /(?:^|\n)([A-ZÀÉÈÊ][A-ZÀÉÈÊ\s]{5,50})\s*\n/g,
+                /(?:^|\n)(Introduction|Conclusion|Procédure|Sécurité|Outils|Matériel|Étapes|Instructions)[:\s\-]+([^\n]{0,80})/gi
+            ];
+            
+            patterns.forEach(pattern => {
+                let match;
+                while ((match = pattern.exec(text)) !== null) {
+                    const title = match[0].trim();
+                    const position = match.index;
+                    
+                    // Éviter les doublons
+                    if (!summary.some(s => s.title === title)) {
+                        summary.push({
+                            title: title,
+                            position: position,
+                            page: findPageForPosition(position)
+                        });
+                    }
+                }
+            });
+            
+            // Trier par position
+            summary.sort((a, b) => a.position - b.position);
+            
+            return summary.slice(0, 50); // Limiter à 50 sections
+        }
+
+        // Trouver la page correspondant à une position dans le texte
+        function findPageForPosition(position) {
+            let currentPos = 0;
+            for (let i = 0; i < pdfPages.length; i++) {
+                currentPos += pdfPages[i].text.length;
+                if (currentPos >= position) {
+                    return i + 1;
+                }
             }
+            return pdfPages.length;
+        }
 
-            return extractedText;
+        // Rechercher dans une plage de pages
+        function searchInPages(query, startPage = 1, endPage = null) {
+            endPage = endPage || pdfPages.length;
+            const results = [];
+            const lowerQuery = query.toLowerCase();
+            
+            for (let i = startPage - 1; i < endPage && i < pdfPages.length; i++) {
+                const pageText = pdfPages[i].text.toLowerCase();
+                if (pageText.includes(lowerQuery)) {
+                    // Extraire le contexte autour du mot-clé
+                    const index = pageText.indexOf(lowerQuery);
+                    const start = Math.max(0, index - 100);
+                    const end = Math.min(pageText.length, index + 200);
+                    const context = pdfPages[i].text.substring(start, end);
+                    
+                    results.push({
+                        page: i + 1,
+                        context: context
+                    });
+                }
+            }
+            
+            return results;
         }
 
         // Démarrage du mode mains libres
@@ -609,10 +733,11 @@
             speakText(answer);
         }
 
-        // Génération des réponses
+        // Génération des réponses avec navigation intelligente
         function generateAnswer(query, content) {
             const lowerQuery = query.toLowerCase();
 
+            // Commandes de contrôle
             if (lowerQuery.includes('désactiv') || lowerQuery.includes('stop') || lowerQuery.includes('arrêt')) {
                 autoListenEnabled = false;
                 document.getElementById('modeIndicator').classList.remove('active');
@@ -620,21 +745,136 @@
                 return 'Mode mains libres désactivé.';
             }
 
-            if (lowerQuery.includes('procédure') || lowerQuery.includes('comment') || lowerQuery.includes('étape')) {
-                return `D'après le document de maintenance : ${content.substring(0, 250)}. Voulez-vous plus de détails ?`;
-            } else if (lowerQuery.includes('sécurité') || lowerQuery.includes('danger') || lowerQuery.includes('risque') || lowerQuery.includes('protection')) {
-                return 'Consignes de sécurité : Portez vos équipements de protection individuelle. Coupez l\'alimentation avant intervention. Respectez les distances de sécurité.';
-            } else if (lowerQuery.includes('outil') || lowerQuery.includes('matériel') || lowerQuery.includes('équipement')) {
-                return 'Outils nécessaires : clés, tournevis, multimètre, équipements de protection. Consultez la liste dans le document.';
-            } else if (lowerQuery.includes('lire') || lowerQuery.includes('lit') || lowerQuery.includes('tout')) {
-                speakText('Lecture du document en cours.');
-                setTimeout(() => speakText(content), 2000);
-                return 'Lecture du document...';
-            } else if (lowerQuery.includes('merci') || lowerQuery.includes('ok') || lowerQuery.includes('compris')) {
-                return 'De rien ! Je reste à votre écoute.';
-            } else {
-                return `Concernant "${query}" : selon le document, vérifiez les spécifications techniques. Que voulez-vous savoir exactement ?`;
+            // Commandes de navigation
+            if (lowerQuery.includes('sommaire') || lowerQuery.includes('table des matières') || lowerQuery.includes('chapitres')) {
+                if (pdfSummary.length === 0) {
+                    return 'Aucun sommaire détecté automatiquement. Le document contient ' + pdfPages.length + ' pages. Utilisez "chercher" suivi d\'un mot-clé pour trouver une section.';
+                }
+                
+                const summaryText = pdfSummary.slice(0, 10).map((s, i) => 
+                    `Section ${i + 1}: ${s.title}, page ${s.page}`
+                ).join('. ');
+                
+                return `Voici le sommaire avec ${pdfSummary.length} sections principales. ${summaryText}. Dites "aller à la section" suivi du numéro pour naviguer.`;
             }
+
+            // Navigation par numéro de page
+            const pageMatch = lowerQuery.match(/(?:page|pages)\s+(\d+)/);
+            if (pageMatch) {
+                const pageNum = parseInt(pageMatch[1]);
+                if (pageNum > 0 && pageNum <= pdfPages.length) {
+                    const pageContent = pdfPages[pageNum - 1].text.substring(0, 400);
+                    return `Page ${pageNum} : ${pageContent}... Voulez-vous que je continue ?`;
+                }
+                return `Le document contient ${pdfPages.length} pages. La page ${pageNum} n'existe pas.`;
+            }
+
+            // Aller à une section
+            const sectionMatch = lowerQuery.match(/(?:section|chapitre)\s+(\d+)/);
+            if (sectionMatch || lowerQuery.includes('aller à')) {
+                const sectionNum = sectionMatch ? parseInt(sectionMatch[1]) - 1 : 0;
+                if (pdfSummary[sectionNum]) {
+                    currentSection = pdfSummary[sectionNum];
+                    const sectionContent = content.substring(
+                        currentSection.position, 
+                        currentSection.position + 500
+                    );
+                    return `${currentSection.title}. Contenu : ${sectionContent}... Voulez-vous que je continue cette section ?`;
+                }
+                return 'Section non trouvée. Dites "sommaire" pour voir les sections disponibles.';
+            }
+
+            // Recherche par mot-clé
+            if (lowerQuery.includes('cherche') || lowerQuery.includes('chercher') || lowerQuery.includes('trouve') || lowerQuery.includes('trouver')) {
+                const searchTerms = lowerQuery
+                    .replace(/cherche|chercher|trouve|trouver|le|la|les|un|une|des/gi, '')
+                    .trim();
+                
+                if (searchTerms.length > 2) {
+                    const results = searchInPages(searchTerms);
+                    if (results.length > 0) {
+                        const firstResult = results[0];
+                        const otherPages = results.slice(1, 4).map(r => r.page).join(', ');
+                        return `J'ai trouvé "${searchTerms}" à la page ${firstResult.page}. Contexte : ${firstResult.context}... ${results.length > 1 ? `Aussi trouvé pages ${otherPages}.` : ''}`;
+                    }
+                    return `Je n'ai pas trouvé "${searchTerms}" dans le document de ${pdfPages.length} pages.`;
+                }
+            }
+
+            // Informations sur le document
+            if (lowerQuery.includes('combien de pages') || lowerQuery.includes('nombre de pages')) {
+                return `Le document contient ${pdfPages.length} pages. Dites "sommaire" pour voir la structure, ou "chercher" suivi d'un mot-clé pour trouver une information.`;
+            }
+
+            // Procédure
+            if (lowerQuery.includes('procédure') || lowerQuery.includes('comment') || lowerQuery.includes('étape')) {
+                const results = searchInPages('procédure');
+                if (results.length > 0) {
+                    return `Procédure trouvée page ${results[0].page} : ${results[0].context}... Voulez-vous plus de détails ?`;
+                }
+                
+                // Chercher "étape" si procédure pas trouvée
+                const stepResults = searchInPages('étape');
+                if (stepResults.length > 0) {
+                    return `Étapes trouvées page ${stepResults[0].page} : ${stepResults[0].context}... Voulez-vous la suite ?`;
+                }
+                
+                return 'Je n\'ai pas trouvé de procédure explicite. Dites "chercher" suivi d\'un mot-clé plus précis.';
+            }
+
+            // Sécurité
+            if (lowerQuery.includes('sécurité') || lowerQuery.includes('danger') || lowerQuery.includes('risque') || lowerQuery.includes('protection')) {
+                const results = searchInPages('sécurité');
+                if (results.length > 0) {
+                    return `Consignes de sécurité page ${results[0].page} : ${results[0].context}`;
+                }
+                return 'Consignes générales : Portez vos EPI. Coupez l\'alimentation. Consultez les sections sécurité du document.';
+            }
+
+            // Outils
+            if (lowerQuery.includes('outil') || lowerQuery.includes('matériel') || lowerQuery.includes('équipement')) {
+                const results = searchInPages('outil');
+                if (results.length === 0) {
+                    const matResults = searchInPages('matériel');
+                    if (matResults.length > 0) {
+                        return `Matériel page ${matResults[0].page} : ${matResults[0].context}`;
+                    }
+                } else {
+                    return `Outils page ${results[0].page} : ${results[0].context}`;
+                }
+                return 'Liste d\'outils non trouvée. Dites "chercher équipement" pour une recherche plus large.';
+            }
+
+            // Lecture complète ou continuation
+            if (lowerQuery.includes('lire') || lowerQuery.includes('continue') || lowerQuery.includes('suite')) {
+                if (currentSection) {
+                    const sectionContent = content.substring(
+                        currentSection.position, 
+                        currentSection.position + 1000
+                    );
+                    return `Suite de ${currentSection.title} : ${sectionContent}`;
+                }
+                
+                // Lire le début du document
+                const preview = pdfPages[0].text.substring(0, 500);
+                return `Début du document de ${pdfPages.length} pages : ${preview}... Dites "suite" pour continuer ou "page" suivi d'un numéro pour aller à une page spécifique.`;
+            }
+
+            // Aide
+            if (lowerQuery.includes('aide') || lowerQuery.includes('commandes') || lowerQuery.includes('comment faire')) {
+                return 'Commandes disponibles : "sommaire" pour voir la structure. "page" suivi d\'un numéro. "chercher" suivi d\'un mot-clé. "procédure", "sécurité", "outils". "combien de pages". Document de ' + pdfPages.length + ' pages chargé.';
+            }
+
+            // Réponse par défaut - recherche contextuelle
+            const words = lowerQuery.split(' ').filter(w => w.length > 3);
+            if (words.length > 0) {
+                const results = searchInPages(words[0]);
+                if (results.length > 0) {
+                    return `Page ${results[0].page} : ${results[0].context}... Trouvé sur ${results.length} page(s). Voulez-vous voir d'autres résultats ?`;
+                }
+            }
+
+            return `Je n'ai pas compris "${query}". Dites "aide" pour voir les commandes disponibles. Le document contient ${pdfPages.length} pages.`;
         }
 
         // Synthèse vocale
