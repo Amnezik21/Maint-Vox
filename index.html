@@ -557,9 +557,11 @@
                     const page = await pdf.getPage(pageNum);
                     const textContent = await page.getTextContent();
                     
+                    // Amélioration : garder la structure avec les retours à la ligne
                     const pageText = textContent.items
                         .map(item => item.str)
-                        .join(' ');
+                        .join(' ')
+                        .replace(/\s{2,}/g, ' '); // Réduire espaces multiples mais garder le texte
                     
                     // Stocker chaque page séparément
                     pdfPages.push({
@@ -567,14 +569,19 @@
                         text: pageText.trim()
                     });
                     
-                    fullText += pageText + '\n\n';
+                    fullText += pageText + '\n';
                     
                     if (pageNum % 10 === 0) {
                         console.log(`✅ ${pageNum}/${pdf.numPages} pages extraites...`);
                     }
                 }
                 
-                // Nettoyer le texte
+                console.log('📄 Exemple page 1:', pdfPages[0].text.substring(0, 200));
+                if (pdfPages.length > 1) {
+                    console.log('📄 Exemple page 2:', pdfPages[1].text.substring(0, 200));
+                }
+                
+                // Nettoyer le texte complet
                 fullText = fullText
                     .replace(/\s+/g, ' ')
                     .trim();
@@ -600,35 +607,80 @@
         function extractSummary(text) {
             const summary = [];
             
-            // Rechercher les patterns de titre/section
+            console.log('📑 Extraction du sommaire, texte total:', text.length, 'caractères');
+            
+            // Patterns améliorés pour détecter les sommaires
             const patterns = [
-                /(?:^|\n)(CHAPITRE|SECTION|PARTIE)\s+(\d+|[IVX]+)[:\s\-]+([^\n]{10,100})/gi,
-                /(?:^|\n)(\d+[\.\)]\s+[A-ZÀÉÈÊ][^\n]{10,100})/g,
-                /(?:^|\n)([A-ZÀÉÈÊ][A-ZÀÉÈÊ\s]{5,50})\s*\n/g,
-                /(?:^|\n)(Introduction|Conclusion|Procédure|Sécurité|Outils|Matériel|Étapes|Instructions)[:\s\-]+([^\n]{0,80})/gi
+                // Format numérique : 1.1, 1.2, etc.
+                /(\d+\.?\d*)\s*[-\s]+([^\n]{10,100}?)[\s.]*(\d+)$/gm,
+                // Format avec tirets
+                /^\s*[-•]\s*([^\n]{10,100})[\s.]*(\d+)$/gm,
+                // Chapitres
+                /(?:CHAPITRE|SECTION|PARTIE)\s+([\dIVX]+)[:\s\-]+([^\n]{5,100})/gi,
+                // Titres en majuscules suivis de points
+                /^([A-ZÀÉÈÊ\s]{8,60})[\s.]+(\d+)$/gm,
+                // Format simple avec numéro de page à la fin
+                /^(.{10,80})[\s.]{3,}(\d+)$/gm
             ];
             
-            patterns.forEach(pattern => {
-                let match;
-                while ((match = pattern.exec(text)) !== null) {
-                    const title = match[0].trim();
-                    const position = match.index;
-                    
-                    // Éviter les doublons
-                    if (!summary.some(s => s.title === title)) {
-                        summary.push({
-                            title: title,
-                            position: position,
-                            page: findPageForPosition(position)
-                        });
+            // Chercher aussi spécifiquement la page avec "SOMMAIRE"
+            const summaryPageIndex = pdfPages.findIndex(p => 
+                p.text.toUpperCase().includes('SOMMAIRE') || 
+                p.text.toUpperCase().includes('TABLE DES MATIERES') ||
+                p.text.toUpperCase().includes('TABLE DES MATIÈRES')
+            );
+            
+            if (summaryPageIndex !== -1) {
+                console.log('✅ Page sommaire détectée:', summaryPageIndex + 1);
+                const summaryPageText = pdfPages[summaryPageIndex].text;
+                
+                // Extraire les lignes avec numéros de page
+                const lines = summaryPageText.split('\n');
+                lines.forEach((line, index) => {
+                    // Ligne avec numéro de page à la fin
+                    const pageNumMatch = line.match(/^(.{10,100})[\s.]+(\d+)\s*$/);
+                    if (pageNumMatch) {
+                        const title = pageNumMatch[1].trim();
+                        const pageNum = parseInt(pageNumMatch[2]);
+                        
+                        if (title.length > 5 && pageNum > 0 && pageNum <= pdfPages.length) {
+                            summary.push({
+                                title: title,
+                                position: summaryPageIndex * 1000 + index,
+                                page: pageNum
+                            });
+                        }
                     }
-                }
-            });
+                });
+            }
+            
+            // Si le sommaire détecté est vide, utiliser les patterns généraux
+            if (summary.length === 0) {
+                console.log('⚠️ Sommaire structuré non trouvé, recherche de titres...');
+                patterns.forEach(pattern => {
+                    let match;
+                    while ((match = pattern.exec(text)) !== null) {
+                        const title = match[1] || match[0];
+                        const cleanTitle = title.trim();
+                        
+                        if (cleanTitle.length > 5 && !summary.some(s => s.title === cleanTitle)) {
+                            summary.push({
+                                title: cleanTitle,
+                                position: match.index,
+                                page: findPageForPosition(match.index)
+                            });
+                        }
+                    }
+                });
+            }
             
             // Trier par position
             summary.sort((a, b) => a.position - b.position);
             
-            return summary.slice(0, 50); // Limiter à 50 sections
+            console.log('📋 Sommaire extrait:', summary.length, 'entrées');
+            summary.slice(0, 5).forEach(s => console.log(' -', s.title, 'p.', s.page));
+            
+            return summary.slice(0, 50);
         }
 
         // Trouver la page correspondant à une position dans le texte
@@ -775,16 +827,33 @@
             }
 
             // Commandes de navigation
-            if (lowerQuery.includes('sommaire') || lowerQuery.includes('table des matières') || lowerQuery.includes('chapitres')) {
+            if (lowerQuery.includes('sommaire') || lowerQuery.includes('table des matières') || lowerQuery.includes('table des matieres') || lowerQuery.includes('chapitres')) {
+                console.log('📑 Demande de sommaire');
+                
+                // D'abord, chercher si une page "SOMMAIRE" existe
+                const summaryPageIndex = pdfPages.findIndex(p => 
+                    p.text.toUpperCase().includes('SOMMAIRE') || 
+                    p.text.toUpperCase().includes('TABLE DES MATIERES') ||
+                    p.text.toUpperCase().includes('TABLE DES MATIÈRES')
+                );
+                
+                if (summaryPageIndex !== -1) {
+                    console.log('✅ Page SOMMAIRE trouvée:', summaryPageIndex + 1);
+                    const summaryText = pdfPages[summaryPageIndex].text.substring(0, 600);
+                    return `Sommaire trouvé page ${summaryPageIndex + 1}. Voici le contenu : ${summaryText}. Pour aller à une section, dites "page" suivi du numéro.`;
+                }
+                
+                // Sinon, utiliser le sommaire extrait automatiquement
                 if (pdfSummary.length === 0) {
-                    return 'Aucun sommaire détecté automatiquement. Le document contient ' + pdfPages.length + ' pages. Utilisez "chercher" suivi d\'un mot-clé pour trouver une section.';
+                    console.log('⚠️ Aucun sommaire structuré détecté');
+                    return `Ce document contient ${pdfPages.length} pages mais je n'ai pas détecté de sommaire structuré. Dites "page 1" pour commencer la lecture, ou "chercher" suivi d'un mot-clé pour trouver une information.`;
                 }
                 
                 const summaryText = pdfSummary.slice(0, 10).map((s, i) => 
-                    `Section ${i + 1}: ${s.title}, page ${s.page}`
+                    `${i + 1}: ${s.title}, page ${s.page}`
                 ).join('. ');
                 
-                return `Voici le sommaire avec ${pdfSummary.length} sections principales. ${summaryText}. Dites "aller à la section" suivi du numéro pour naviguer.`;
+                return `J'ai détecté ${pdfSummary.length} sections. Voici les principales : ${summaryText}. Dites "section" suivi d'un numéro ou "page" suivi d'un numéro pour naviguer.`;
             }
 
             // Navigation par numéro de page
@@ -814,20 +883,26 @@
             }
 
             // Recherche par mot-clé
-            if (lowerQuery.includes('cherche') || lowerQuery.includes('chercher') || lowerQuery.includes('trouve') || lowerQuery.includes('trouver')) {
+            if (lowerQuery.includes('cherche') || lowerQuery.includes('chercher') || lowerQuery.includes('trouve') || lowerQuery.includes('trouver') || lowerQuery.includes('recherche')) {
                 const searchTerms = lowerQuery
-                    .replace(/cherche|chercher|trouve|trouver|le|la|les|un|une|des/gi, '')
+                    .replace(/cherche|chercher|trouve|trouver|recherche|le|la|les|un|une|des|moi|dans/gi, '')
                     .trim();
+                
+                console.log('🔍 Recherche demandée:', searchTerms);
                 
                 if (searchTerms.length > 2) {
                     const results = searchInPages(searchTerms);
                     if (results.length > 0) {
+                        console.log('✅ Trouvé', results.length, 'résultats');
                         const firstResult = results[0];
-                        const otherPages = results.slice(1, 4).map(r => r.page).join(', ');
-                        return `J'ai trouvé "${searchTerms}" à la page ${firstResult.page}. Contexte : ${firstResult.context}... ${results.length > 1 ? `Aussi trouvé pages ${otherPages}.` : ''}`;
+                        const otherPages = results.slice(1, 4).map(r => `page ${r.page}`).join(', ');
+                        const moreInfo = results.length > 1 ? ` Également trouvé ${otherPages}.` : '';
+                        return `Trouvé "${searchTerms}" page ${firstResult.page}. Extrait : ${firstResult.context}.${moreInfo} Dites "page ${firstResult.page}" pour voir toute la page.`;
                     }
-                    return `Je n'ai pas trouvé "${searchTerms}" dans le document de ${pdfPages.length} pages.`;
+                    console.log('❌ Aucun résultat');
+                    return `"${searchTerms}" non trouvé dans ce document de ${pdfPages.length} pages. Essayez un autre mot-clé ou dites "sommaire".`;
                 }
+                return 'Dites "chercher" suivi du mot que vous cherchez. Par exemple "chercher maintenance".';
             }
 
             // Informations sur le document
