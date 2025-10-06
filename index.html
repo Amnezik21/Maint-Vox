@@ -336,22 +336,21 @@
                 <p style="color: #1e40af; font-weight: bold; margin-bottom: 8px;">💬 Commandes vocales disponibles :</p>
                 <p style="color: #1e3a8a; font-size: 0.9em; line-height: 1.8;">
                     <strong>Navigation :</strong><br>
-                    • "Sommaire" ou "Table des matières"<br>
-                    • "Page 25" (aller à une page spécifique)<br>
+                    • "Sommaire" ou "Table" (affiche la structure)<br>
+                    • "Page 25" ou "P25" (va à la page 25)<br>
                     • "Combien de pages ?"<br>
-                    • "Aller à la section 3"<br><br>
+                    • "Section 3"<br><br>
                     
                     <strong>Recherche :</strong><br>
-                    • "Chercher maintenance préventive"<br>
-                    • "Trouve le mot pression"<br>
-                    • "Quelle est la procédure ?"<br>
-                    • "Quels sont les outils ?"<br>
-                    • "Consignes de sécurité ?"<br><br>
+                    • "Chercher maintenance"<br>
+                    • "Trouve pression"<br>
+                    • "Procédure"<br>
+                    • "Outils"<br>
+                    • "Sécurité"<br><br>
                     
                     <strong>Lecture :</strong><br>
-                    • "Lire le document"<br>
-                    • "Continue" ou "Suite"<br>
-                    • "Aide" (liste des commandes)
+                    • "Lire" ou "Continue"<br>
+                    • "Aide" (commandes)
                 </p>
             </div>
             
@@ -522,7 +521,16 @@
                 pdfText = await extractTextFromPDF(arrayBuffer);
                 
                 console.log('✅ PDF chargé, texte extrait (' + pdfText.length + ' caractères)');
-                console.log('Aperçu:', pdfText.substring(0, 200));
+                console.log('🔍 TEST - Recherche du mot SOMMAIRE dans toutes les pages:');
+                pdfPages.forEach((p, i) => {
+                    if (p.text.toUpperCase().includes('SOMMAIRE')) {
+                        console.log(`   ✅ SOMMAIRE trouvé page ${i + 1}`);
+                    }
+                });
+                console.log('📄 Contenu page 1:', pdfPages[0].text.substring(0, 150));
+                if (pdfPages.length > 4) {
+                    console.log('📄 Contenu page 5:', pdfPages[4].text.substring(0, 150));
+                }
                 
                 document.getElementById('fileName').textContent = file.name + ' ✅';
                 
@@ -827,42 +835,78 @@
             }
 
             // Commandes de navigation
-            if (lowerQuery.includes('sommaire') || lowerQuery.includes('table des matières') || lowerQuery.includes('table des matieres') || lowerQuery.includes('chapitres')) {
+            if (lowerQuery.includes('sommaire') || lowerQuery.includes('table') || lowerQuery.includes('chapitres') || lowerQuery.includes('index')) {
                 console.log('📑 Demande de sommaire');
                 
-                // D'abord, chercher si une page "SOMMAIRE" existe
-                const summaryPageIndex = pdfPages.findIndex(p => 
-                    p.text.toUpperCase().includes('SOMMAIRE') || 
-                    p.text.toUpperCase().includes('TABLE DES MATIERES') ||
-                    p.text.toUpperCase().includes('TABLE DES MATIÈRES')
-                );
+                // Recherche très tolérante du mot "sommaire"
+                let summaryPageIndex = -1;
+                for (let i = 0; i < pdfPages.length; i++) {
+                    const pageTextUpper = pdfPages[i].text.toUpperCase().replace(/\s/g, '');
+                    if (pageTextUpper.includes('SOMMAIRE') || 
+                        pageTextUpper.includes('TABLEDESMATIERES') ||
+                        pageTextUpper.includes('TABLEMATIERE')) {
+                        summaryPageIndex = i;
+                        break;
+                    }
+                }
+                
+                // Si pas trouvé, chercher les pages avec beaucoup de numéros (souvent le sommaire)
+                if (summaryPageIndex === -1) {
+                    console.log('⚠️ Mot SOMMAIRE non trouvé, recherche de page avec structure...');
+                    for (let i = 0; i < Math.min(10, pdfPages.length); i++) {
+                        const pageText = pdfPages[i].text;
+                        // Compter les lignes avec format "Titre...page"
+                        const dotMatches = (pageText.match(/\.{3,}/g) || []).length;
+                        const numberMatches = (pageText.match(/\d+\s*$/gm) || []).length;
+                        
+                        if (dotMatches > 5 || numberMatches > 8) {
+                            summaryPageIndex = i;
+                            console.log('✅ Page ressemblant à un sommaire détectée:', i + 1);
+                            break;
+                        }
+                    }
+                }
                 
                 if (summaryPageIndex !== -1) {
-                    console.log('✅ Page SOMMAIRE trouvée:', summaryPageIndex + 1);
-                    const summaryText = pdfPages[summaryPageIndex].text.substring(0, 600);
-                    return `Sommaire trouvé page ${summaryPageIndex + 1}. Voici le contenu : ${summaryText}. Pour aller à une section, dites "page" suivi du numéro.`;
+                    console.log('✅ Sommaire trouvé page:', summaryPageIndex + 1);
+                    const summaryText = pdfPages[summaryPageIndex].text;
+                    
+                    // Extraire les lignes principales (limiter pour la lecture vocale)
+                    const lines = summaryText
+                        .split(/[\n\r]+/)
+                        .filter(line => line.trim().length > 10)
+                        .slice(0, 15)
+                        .join('. ');
+                    
+                    return `Sommaire trouvé page ${summaryPageIndex + 1}. Voici le contenu : ${lines}. Pour aller à une page spécifique, dites "page" suivi du numéro.`;
                 }
                 
-                // Sinon, utiliser le sommaire extrait automatiquement
-                if (pdfSummary.length === 0) {
-                    console.log('⚠️ Aucun sommaire structuré détecté');
-                    return `Ce document contient ${pdfPages.length} pages mais je n'ai pas détecté de sommaire structuré. Dites "page 1" pour commencer la lecture, ou "chercher" suivi d'un mot-clé pour trouver une information.`;
+                // Dernier recours : lire les premières pages
+                console.log('⚠️ Sommaire non détecté, lecture début document');
+                if (pdfPages.length >= 2) {
+                    const page2 = pdfPages[1].text.substring(0, 400);
+                    return `Je n'ai pas trouvé de sommaire explicite. Voici le début de la page 2 : ${page2}. Dites "page" suivi d'un numéro pour naviguer, ou "chercher" pour trouver un mot-clé.`;
                 }
                 
-                const summaryText = pdfSummary.slice(0, 10).map((s, i) => 
-                    `${i + 1}: ${s.title}, page ${s.page}`
-                ).join('. ');
-                
-                return `J'ai détecté ${pdfSummary.length} sections. Voici les principales : ${summaryText}. Dites "section" suivi d'un numéro ou "page" suivi d'un numéro pour naviguer.`;
+                return `Document de ${pdfPages.length} pages chargé. Je n'ai pas détecté de sommaire. Utilisez "page" suivi d'un numéro pour naviguer, ou "chercher" suivi d'un mot-clé.`;
             }
 
             // Navigation par numéro de page
-            const pageMatch = lowerQuery.match(/(?:page|pages)\s+(\d+)/);
-            if (pageMatch) {
-                const pageNum = parseInt(pageMatch[1]);
+            const pageMatch = lowerQuery.match(/(?:page|pages)\s+(\d+)|(?:^|\s)(\d+)(?:\s|$)/);
+            if (pageMatch || lowerQuery.match(/^p\d+$/)) {
+                let pageNum;
+                if (lowerQuery.match(/^p\d+$/)) {
+                    pageNum = parseInt(lowerQuery.substring(1));
+                } else {
+                    pageNum = parseInt(pageMatch[1] || pageMatch[2]);
+                }
+                
+                console.log('📄 Navigation vers page:', pageNum);
+                
                 if (pageNum > 0 && pageNum <= pdfPages.length) {
-                    const pageContent = pdfPages[pageNum - 1].text.substring(0, 400);
-                    return `Page ${pageNum} : ${pageContent}... Voulez-vous que je continue ?`;
+                    const pageContent = pdfPages[pageNum - 1].text;
+                    const excerpt = pageContent.substring(0, 500).replace(/\s+/g, ' ');
+                    return `Page ${pageNum} sur ${pdfPages.length} : ${excerpt}. Dites "suite" pour continuer cette page, ou "page" suivi d'un autre numéro pour naviguer.`;
                 }
                 return `Le document contient ${pdfPages.length} pages. La page ${pageNum} n'existe pas.`;
             }
