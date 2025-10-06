@@ -320,10 +320,11 @@
         <div class="instructions">
             <h3>📋 Mode d'emploi :</h3>
             <ul>
-                <li><strong>1.</strong> Chargez votre document PDF de maintenance (extension .pdf)</li>
-                <li><strong>2.</strong> Cliquez une seule fois sur "DÉMARRER LE MODE MAINS LIBRES"</li>
-                <li><strong>3.</strong> Parlez naturellement - l'assistant vous écoute en continu</li>
-                <li><strong>4.</strong> Plus besoin de toucher l'écran ensuite !</li>
+                <li><strong>1.</strong> Testez d'abord le microphone avec le bouton orange</li>
+                <li><strong>2.</strong> Chargez votre document PDF de maintenance (extension .pdf)</li>
+                <li><strong>3.</strong> Cliquez sur "DÉMARRER LE MODE MAINS LIBRES"</li>
+                <li><strong>4.</strong> Parlez naturellement - l'assistant vous écoute en continu</li>
+                <li><strong>5.</strong> Plus besoin de toucher l'écran ensuite !</li>
             </ul>
             
             <div class="examples">
@@ -352,6 +353,7 @@
 
         // TEST DU MICROPHONE AU CHARGEMENT
         window.addEventListener('load', function() {
+            console.log('🚀 Application chargée - Maint-Vox v1.0');
             checkMicrophoneSupport();
         });
 
@@ -361,22 +363,26 @@
             if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
                 micTestElement.textContent = '❌ Reconnaissance vocale non supportée';
                 micTestElement.style.color = '#dc2626';
+                console.error('❌ Reconnaissance vocale non supportée par ce navigateur');
                 alert('⚠️ Votre navigateur ne supporte pas la reconnaissance vocale.\n\nUtilisez Chrome, Edge ou Safari.');
                 return;
             }
             
             micTestElement.textContent = '✅ API de reconnaissance vocale détectée';
             micTestElement.style.color = '#16a34a';
+            console.log('✅ API de reconnaissance vocale disponible');
         }
 
         // BOUTON TEST MICROPHONE
         document.getElementById('testMicButton').addEventListener('click', async function() {
+            console.log('🎤 Test du microphone demandé...');
             const micTestElement = document.getElementById('micTest');
             
             try {
                 micTestElement.textContent = '⏳ Test en cours...';
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
+                console.log('✅ Accès au microphone accordé');
                 micTestElement.textContent = '✅ MICROPHONE AUTORISÉ ET FONCTIONNEL !';
                 micTestElement.style.color = '#16a34a';
                 microphoneAuthorized = true;
@@ -391,7 +397,7 @@
                 document.getElementById('testMicButton').style.display = 'none';
                 
             } catch (error) {
-                console.error('Erreur microphone:', error);
+                console.error('❌ Erreur microphone:', error);
                 micTestElement.textContent = '❌ MICROPHONE BLOQUÉ';
                 micTestElement.style.color = '#dc2626';
                 
@@ -413,7 +419,7 @@
             recognition.interimResults = false;
             recognition.lang = 'fr-FR';
             
-            console.log('✅ Reconnaissance vocale initialisée');
+            console.log('✅ Reconnaissance vocale initialisée (WebKit)');
 
             recognition.onstart = function() {
                 console.log('🎤 Reconnaissance démarrée - ÉCOUTE EN COURS');
@@ -423,7 +429,7 @@
             recognition.onresult = function(event) {
                 const transcript = event.results[0][0].transcript;
                 const confidence = event.results[0][0].confidence;
-                console.log('✅ Transcript reçu:', transcript, '| Confiance:', confidence);
+                console.log('✅ Transcript reçu:', transcript, '| Confiance:', (confidence * 100).toFixed(0) + '%');
                 showTranscript(transcript);
                 handleVoiceQuery(transcript);
             };
@@ -470,7 +476,6 @@
             };
         } else if ('SpeechRecognition' in window) {
             recognition = new SpeechRecognition();
-            // Même configuration que ci-dessus
             console.log('✅ Reconnaissance vocale standard initialisée');
         } else {
             console.error('❌ Reconnaissance vocale non supportée');
@@ -485,6 +490,7 @@
                 return;
             }
 
+            console.log('📄 Chargement du PDF:', file.name);
             document.getElementById('fileName').textContent = file.name;
             speakText('Chargement du document en cours');
 
@@ -492,13 +498,14 @@
                 const arrayBuffer = await file.arrayBuffer();
                 pdfText = await extractTextFromPDF(arrayBuffer);
                 
-                const successMsg = `Document ${file.name} chargé avec succès. Je suis prêt à répondre à vos questions. Cliquez sur le bouton pour activer le mode mains libres.`;
+                console.log('✅ PDF chargé, texte extrait:', pdfText.substring(0, 100) + '...');
+                const successMsg = `Document ${file.name} chargé avec succès. Je suis prêt à répondre à vos questions.`;
                 showResponse(successMsg);
                 speakText(successMsg);
                 
                 document.getElementById('startButton').classList.add('visible');
             } catch (error) {
-                console.error('Erreur PDF:', error);
+                console.error('❌ Erreur PDF:', error);
                 const errorMsg = 'Erreur lors du chargement du PDF';
                 showResponse(errorMsg);
                 speakText(errorMsg);
@@ -511,7 +518,6 @@
             const decoder = new TextDecoder('utf-8', { fatal: false });
             let rawText = decoder.decode(uint8Array);
 
-            // Extraction des chaînes entre parenthèses
             const textMatches = rawText.match(/\(([^)]+)\)/g);
             let extractedText = '';
 
@@ -547,12 +553,11 @@
                 return;
             }
             
-            // Demander l'autorisation du microphone
             try {
-                console.log('📋 Vérification des permissions microphone...');
+                console.log('📋 Vérification finale des permissions...');
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 stream.getTracks().forEach(track => track.stop());
-                console.log('✅ Microphone autorisé');
+                console.log('✅ Permissions confirmées');
                 
                 autoListenEnabled = true;
                 document.getElementById('modeIndicator').classList.add('active');
@@ -567,21 +572,13 @@
                             console.log('✅ Reconnaissance démarrée avec succès');
                         } catch (error) {
                             console.error('❌ Erreur démarrage reconnaissance:', error);
-                            alert('Erreur lors du démarrage de la reconnaissance vocale: ' + error.message);
+                            alert('Erreur lors du démarrage: ' + error.message);
                         }
-                    } else {
-                        console.error('❌ Objet recognition non initialisé');
-                        alert('La reconnaissance vocale n\'est pas disponible');
                     }
-                }, 2000);
+                }, 2500);
             } catch (error) {
-                console.error('❌ Erreur microphone:', error);
-                alert('⚠️ MICROPHONE NON AUTORISÉ ⚠️\n\n' +
-                      '1. Cliquez sur l\'icône 🔒 ou 🎤 dans la barre d\'adresse\n' +
-                      '2. Sélectionnez "Autoriser" pour le microphone\n' +
-                      '3. Rechargez la page (F5)\n' +
-                      '4. Cliquez à nouveau sur "Démarrer"\n\n' +
-                      'Erreur : ' + error.message);
+                console.error('❌ Erreur permissions:', error);
+                alert('⚠️ Erreur d\'autorisation: ' + error.message);
             }
         });
 
@@ -619,19 +616,19 @@
             }
 
             if (lowerQuery.includes('procédure') || lowerQuery.includes('comment') || lowerQuery.includes('étape')) {
-                return `D'après le document de maintenance : ${content.substring(0, 250)}. Voulez-vous plus de détails sur une étape spécifique ?`;
+                return `D'après le document de maintenance : ${content.substring(0, 250)}. Voulez-vous plus de détails ?`;
             } else if (lowerQuery.includes('sécurité') || lowerQuery.includes('danger') || lowerQuery.includes('risque') || lowerQuery.includes('protection')) {
-                return 'Consignes de sécurité : Portez toujours vos équipements de protection individuelle. Coupez l\'alimentation électrique avant intervention. Respectez les distances de sécurité mentionnées dans le document.';
+                return 'Consignes de sécurité : Portez vos équipements de protection individuelle. Coupez l\'alimentation avant intervention. Respectez les distances de sécurité.';
             } else if (lowerQuery.includes('outil') || lowerQuery.includes('matériel') || lowerQuery.includes('équipement')) {
-                return 'Outils nécessaires pour cette intervention : clés, tournevis, multimètre, équipements de protection. Consultez la liste complète dans la section équipement du document.';
+                return 'Outils nécessaires : clés, tournevis, multimètre, équipements de protection. Consultez la liste dans le document.';
             } else if (lowerQuery.includes('lire') || lowerQuery.includes('lit') || lowerQuery.includes('tout')) {
-                speakText('Je commence la lecture complète du document de maintenance.');
+                speakText('Lecture du document en cours.');
                 setTimeout(() => speakText(content), 2000);
-                return 'Lecture du document en cours...';
+                return 'Lecture du document...';
             } else if (lowerQuery.includes('merci') || lowerQuery.includes('ok') || lowerQuery.includes('compris')) {
-                return 'Pas de problème ! Je reste à votre écoute pour toute autre question.';
+                return 'De rien ! Je reste à votre écoute.';
             } else {
-                return `Concernant "${query}" : selon le document, je vous recommande de vérifier les spécifications techniques. Que voulez-vous savoir exactement ?`;
+                return `Concernant "${query}" : selon le document, vérifiez les spécifications techniques. Que voulez-vous savoir exactement ?`;
             }
         }
 
